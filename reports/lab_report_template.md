@@ -1,46 +1,57 @@
-# Day 08 Lab Report
+# Day 08 Lab Report — template & rubric
 
-## 1. Team / student
+Khi chạy `make run-scenarios`, CLI gọi `write_report()` trong `src/langgraph_agent_lab/report.py` và **ghi đè** `reports/lab_report.md` với bảng metrics và các mục kiến trúc cố định. Giữ file này làm **mục lục / hướng dẫn**; nội dung số liệu luôn lấy từ `outputs/metrics.json` sau mỗi lần chạy scenario.
+
+## 1. Team / student *(điền thủ công — không ghi đè bởi `report.py`)*
 
 - Name:
 - Repo/commit:
-- Date:
+- Date (local):
 
-## 2. Architecture
+## 2. Architecture *(được điền tự động trong `lab_report.md`)*
 
-Describe your graph nodes, edges, state fields, and reducers.
+Mô tả đồng bộ với code hiện tại:
 
-## 3. State schema
+- `intake` → `classify` (keyword: risky > tool > missing_info > error > simple).
+- Nhánh error: **tool trước**, rồi `evaluate` / `retry` có giới hạn `max_attempts`; không vào `retry` trước lần gọi tool đầu.
+- Risky: `risky_action` → `approval` → `tool` hoặc `clarify`.
+- `finalize` → END; `dead_letter` khi hết retry.
 
-List important fields and whether they are overwrite or append-only.
+## 3. State schema *(bảng trong `report.py` → `lab_report.md`)*
 
-| Field | Reducer | Why |
-|---|---|---|
-| messages | append | audit conversation/events |
-| route | overwrite | current route only |
+Các trường chính trong `AgentState`: scalar ghi đè; `messages`, `tool_results`, `errors`, `events` dùng reducer `add`.
 
-## 4. Scenario results
+## 4. Scenario results *(tự động)*
 
-Paste the key metrics from `outputs/metrics.json`.
+- Tóm tắt: `total_scenarios`, `success_rate`, `avg_nodes_visited`, `total_retries`, `total_interrupts`.
+- Bảng từng dòng: `scenario_metrics` (expected vs actual route, success, retries, interrupts, approval, lỗi rút gọn).
 
-| Scenario | Expected route | Actual route | Success | Retries | Interrupts |
-|---|---|---|---:|---:|---:|
+## 5. Failure analysis *(đoạn văn cố định trong `report.py` — có thể chỉnh trong code)*
 
-## 5. Failure analysis
+- Retry / tool failure (S05, S07).
+- Risky / approval (S04, S06) và HITL với `interrupt()`.
 
-Describe at least two failure modes you considered:
+## 6. Persistence / recovery *(đoạn văn cố định + chứng cứ thực tế do bạn bổ sung)*
 
-1. Retry or tool failure:
-2. Risky action without approval:
+- `build_checkpointer`: memory / none / sqlite / postgres.
+- `thread_id` trên CLI; web HITL dùng graph + checkpointer singleton và `Command(resume=…)`.
 
-## 6. Persistence / recovery evidence
+## 7. Extension work *(cập nhật theo repo này)*
 
-Explain how you used checkpointer, thread id, state history, or crash-resume.
+- Web: FastAPI, topology Cytoscape, animation `transitions`, gradient node, **Export PNG** (`full` + `scale` cao).
+- HITL: `LANGGRAPH_INTERRUPT`, `POST /api/run` + `use_hitl`, `POST /api/run/resume`; `agent-lab web --hitl`.
+- Tests: `tests_phase12/` (routing, graph, persistence, …).
 
-## 7. Extension work
+## 8. Improvement plan *(đoạn văn gợi ý trong `report.py`)*
 
-Describe any extension you completed: SQLite/Postgres, time travel, fan-out/fan-in, graph diagram, tracing.
+- LLM classify, observability, SQLite/time-travel chứng minh thêm.
 
-## 8. Improvement plan
+---
 
-If you had one more day, what would you productionize first?
+### Lệnh hữu ích
+
+```bash
+make run-scenarios    # → outputs/metrics.json + cập nhật reports/lab_report.md
+make grade-local
+make web              # hoặc make web-hitl
+```
