@@ -28,14 +28,12 @@ from .state import AgentState
 def build_graph(checkpointer: Any | None = None):
     """Build and compile the LangGraph workflow.
 
-    TODO(student): review the architecture and modify nodes/edges only with a clear reason.
-    Required behaviors:
-    - intake -> classify (normalization + routing)
-    - classify routes to answer/tool/clarify/risky/retry
-    - tool -> evaluate creates the retry loop (slide: "done?" check)
-    - risky path requires approval before tool/action
-    - retry loop bounded by max_attempts -> dead_letter on exhaustion
-    - all paths eventually reach finalize -> END
+    Architecture (README):
+    - intake -> classify
+    - classify -> answer | tool | clarify | risky_action | (error -> tool first)
+    - tool -> evaluate -> answer or retry; retry increments attempt and returns to tool until cap
+    - risky_action -> approval -> tool or clarify
+    - max retries exceeded -> dead_letter -> finalize -> END
     """
     try:
         from langgraph.graph import END, START, StateGraph

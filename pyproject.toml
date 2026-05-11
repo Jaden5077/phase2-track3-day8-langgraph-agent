@@ -43,4 +43,4 @@ ignore = ["ANN101", "ANN102"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q --strict-markers"
-testpaths = ["tests"]
+testpaths = ["tests", "tests_phase12"]

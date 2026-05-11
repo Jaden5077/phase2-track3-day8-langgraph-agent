@@ -7,7 +7,7 @@ test:
 	pytest
 
 lint:
-	ruff check src tests
+	ruff check src tests tests_phase12
 
 typecheck:
 	mypy src

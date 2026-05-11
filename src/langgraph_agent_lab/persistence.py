@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 
 def build_checkpointer(kind: str = "memory", database_url: str | None = None) -> Any | None:
     """Return a LangGraph checkpointer.
 
-    TODO(student): add SQLite/Postgres support for the extension track.
-    The starter uses MemorySaver so the lab can run without infrastructure.
+    SQLite uses a long-lived :class:`sqlite3.Connection` plus :class:`SqliteSaver`; WAL and
+    schema are applied on first use via the saver's ``setup()`` (see langgraph-checkpoint-sqlite).
+    ``from_conn_string`` on ``SqliteSaver`` is a context manager and is not suitable as a
+    return value for ``compile(checkpointer=...)``.
     """
     if kind == "none":
         return None
@@ -22,7 +25,9 @@ def build_checkpointer(kind: str = "memory", database_url: str | None = None) ->
             from langgraph.checkpoint.sqlite import SqliteSaver
         except ImportError as exc:
             raise RuntimeError("SQLite checkpointer requires: pip install langgraph-checkpoint-sqlite") from exc
-        return SqliteSaver.from_conn_string(database_url or "checkpoints.db")
+        path = database_url or "checkpoints.db"
+        conn = sqlite3.connect(path, check_same_thread=False)
+        return SqliteSaver(conn)
     if kind == "postgres":
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
