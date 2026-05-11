@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
-
-
-def build_checkpointer(kind: str = "memory", database_url: str | None = None) -> Any | None:
+def build_checkpointer(kind: str = "memory", database_url: str | None = None) -> object | None:
     """Return a LangGraph checkpointer.
 
     SQLite uses a long-lived :class:`sqlite3.Connection` plus :class:`SqliteSaver`; WAL and
@@ -24,7 +21,9 @@ def build_checkpointer(kind: str = "memory", database_url: str | None = None) ->
         try:
             from langgraph.checkpoint.sqlite import SqliteSaver
         except ImportError as exc:
-            raise RuntimeError("SQLite checkpointer requires: pip install langgraph-checkpoint-sqlite") from exc
+            raise RuntimeError(
+                "SQLite checkpointer requires: pip install langgraph-checkpoint-sqlite"
+            ) from exc
         path = database_url or "checkpoints.db"
         conn = sqlite3.connect(path, check_same_thread=False)
         return SqliteSaver(conn)
@@ -32,6 +31,8 @@ def build_checkpointer(kind: str = "memory", database_url: str | None = None) ->
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
         except ImportError as exc:
-            raise RuntimeError("Postgres checkpointer requires: pip install langgraph-checkpoint-postgres") from exc
+            raise RuntimeError(
+                "Postgres checkpointer requires: pip install langgraph-checkpoint-postgres"
+            ) from exc
         return PostgresSaver.from_conn_string(database_url or "")
     raise ValueError(f"Unknown checkpointer kind: {kind}")

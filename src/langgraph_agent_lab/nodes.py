@@ -80,15 +80,34 @@ def ask_clarification_node(state: AgentState) -> dict:
     }
 
 
+def _simulate_error_transient(state: AgentState, attempt: int) -> bool:
+    """Whether the mock tool should return a transient ERROR (drives the evaluate/retry loop).
+
+    Convention (aligns with ``scenarios.jsonl`` / README):
+    - Only for ``route == error`` and ``should_retry`` from the scenario (copied into state).
+    - ``max_attempts == 1`` (e.g. S07_dead_letter): every tool call fails until dead-letter routing.
+    - ``max_attempts > 1`` (e.g. S05): fail while ``attempt < max_attempts - 1``, then succeed so
+      the run can finish without dead letter when the cap is never reached.
+    - If ``should_retry`` is false, do not inject transient failures (first tool call succeeds).
+    """
+    if state.get("route") != Route.ERROR.value or not state.get("should_retry", False):
+        return False
+    cap = max(1, int(state.get("max_attempts", 3)))
+    if cap <= 1:
+        return True
+    return attempt < cap - 1
+
+
 def tool_node(state: AgentState) -> dict:
     """Call a mock tool.
 
-    Simulates transient failures for error-route scenarios to demonstrate retry loops.
-    TODO(student): implement idempotent tool execution and structured tool results.
+    Injects transient ERROR results for the error+retry lab path based on ``should_retry`` and
+    ``max_attempts`` (see ``_simulate_error_transient``).
     """
     attempt = int(state.get("attempt", 0))
-    if state.get("route") == Route.ERROR.value and attempt < 2:
-        result = f"ERROR: transient failure attempt={attempt} scenario={state.get('scenario_id', 'unknown')}"
+    if _simulate_error_transient(state, attempt):
+        sid = state.get("scenario_id", "unknown")
+        result = f"ERROR: transient failure attempt={attempt} scenario={sid}"
     else:
         result = f"mock-tool-result for scenario={state.get('scenario_id', 'unknown')}"
     return {
@@ -174,9 +193,10 @@ def evaluate_node(state: AgentState) -> dict:
     tool_results = state.get("tool_results", [])
     latest = tool_results[-1] if tool_results else ""
     if "ERROR" in latest:
+        msg = "tool result indicates failure, retry needed"
         return {
             "evaluation_result": "needs_retry",
-            "events": [make_event("evaluate", "completed", "tool result indicates failure, retry needed")],
+            "events": [make_event("evaluate", "completed", msg)],
         }
     return {
         "evaluation_result": "success",
@@ -190,9 +210,15 @@ def dead_letter_node(state: AgentState) -> dict:
     Third layer of error strategy: retry -> fallback -> dead letter.
     TODO(student): persist to dead-letter queue, alert on-call, or create support ticket.
     """
+    final_msg = (
+        "Request could not be completed after maximum retry attempts. "
+        "Logged for manual review."
+    )
+    attempt_n = state.get("attempt", 0)
+    ev = make_event("dead_letter", "completed", f"max retries exceeded, attempt={attempt_n}")
     return {
-        "final_answer": "Request could not be completed after maximum retry attempts. Logged for manual review.",
-        "events": [make_event("dead_letter", "completed", f"max retries exceeded, attempt={state.get('attempt', 0)}")],
+        "final_answer": final_msg,
+        "events": [ev],
     }
 
 

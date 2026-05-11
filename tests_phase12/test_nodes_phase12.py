@@ -21,15 +21,41 @@ def test_intake_strips_and_appends_message() -> None:
 
 
 def test_tool_node_error_route_transient_then_success() -> None:
-    s0 = {"route": Route.ERROR.value, "attempt": 0, "scenario_id": "x"}
-    r0 = tool_node(s0)
+    base = {
+        "route": Route.ERROR.value,
+        "scenario_id": "x",
+        "should_retry": True,
+        "max_attempts": 3,
+    }
+    r0 = tool_node({**base, "attempt": 0})
     assert "ERROR" in r0["tool_results"][-1]
-    s1 = {**s0, "attempt": 1}
-    r1 = tool_node(s1)
+    r1 = tool_node({**base, "attempt": 1})
     assert "ERROR" in r1["tool_results"][-1]
-    s2 = {**s0, "attempt": 2}
-    r2 = tool_node(s2)
+    r2 = tool_node({**base, "attempt": 2})
     assert "mock-tool-result" in r2["tool_results"][-1]
+
+
+def test_tool_node_error_dead_letter_cap_always_transient() -> None:
+    base = {
+        "route": Route.ERROR.value,
+        "scenario_id": "S07",
+        "should_retry": True,
+        "max_attempts": 1,
+    }
+    assert "ERROR" in tool_node({**base, "attempt": 0})["tool_results"][-1]
+
+
+def test_tool_node_error_without_should_retry_no_transient() -> None:
+    out = tool_node(
+        {
+            "route": Route.ERROR.value,
+            "attempt": 0,
+            "scenario_id": "x",
+            "should_retry": False,
+            "max_attempts": 3,
+        }
+    )
+    assert "mock-tool-result" in out["tool_results"][-1]
 
 
 def test_evaluate_node_retry_vs_success() -> None:
