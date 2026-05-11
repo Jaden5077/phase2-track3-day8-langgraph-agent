@@ -52,12 +52,25 @@ def run_scenarios(
 def web(
     host: Annotated[str, typer.Option("--host", help="Bind address")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", help="HTTP port")] = 8765,
+    hitl: Annotated[
+        bool,
+        typer.Option(
+            "--hitl",
+            help="Set LANGGRAPH_INTERRUPT=true for real interrupt() + web resume buttons",
+        ),
+    ] = False,
     config: Annotated[
         Path,
         typer.Option("--config", help="Lab YAML (scenarios_path, checkpointer)"),
     ] = Path("configs/lab.yaml"),
 ) -> None:
     """Web UI: step-by-step routing per scenario (requires pip install -e '.[web]')."""
+    import os
+
+    if hitl:
+        os.environ["LANGGRAPH_INTERRUPT"] = "true"
+        typer.secho("HITL: LANGGRAPH_INTERRUPT=true (approval_node uses interrupt())", fg=typer.colors.YELLOW)
+
     try:
         import uvicorn  # type: ignore[import-not-found]
     except ImportError:

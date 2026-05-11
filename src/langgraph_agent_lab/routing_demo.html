@@ -84,6 +84,22 @@
     details { margin-top: 0.35rem; }
     details summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
     pre { margin: 0.35rem 0 0; font-size: 0.68rem; overflow: auto; max-height: 22vh; background: #0a0e14; padding: 0.5rem; border-radius: 6px; color: #c8d4e0; }
+    .hitl-banner { font-size: 0.72rem; color: var(--warn); margin-top: 0.5rem; padding: 0.35rem 0.4rem; border: 1px solid #5a4a20; border-radius: 6px; background: #1e1a0f; }
+    .hitl-row { margin-top: 0.45rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
+    .hitl-row input { accent-color: var(--accent); }
+    #hitl-panel {
+      margin-top: 0.6rem; padding: 0.6rem; border-radius: 8px; border: 1px solid #ffd54f;
+      background: #252014;
+    }
+    #hitl-panel[hidden] { display: none !important; }
+    #hitl-panel h3 { margin: 0 0 0.4rem; font-size: 0.85rem; color: #ffd54f; }
+    #hitl-payload { max-height: 120px; font-size: 0.68rem; }
+    .hitl-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+    .hitl-actions button {
+      flex: 1; padding: 0.45rem; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; font-size: 0.8rem;
+    }
+    #hitl-approve { background: #2a9d8f; color: #0a0e14; }
+    #hitl-reject { background: #6b2f3a; color: #f5e6e8; }
   </style>
 </head>
 <body>
@@ -96,6 +112,19 @@
       <label for="scen">Scenario</label>
       <select id="scen"></select>
       <button type="button" id="run">Chạy &amp; minh hoạ</button>
+      <div id="hitl-banner" class="hitl-banner" hidden></div>
+      <label class="hitl-row" id="hitl-row" hidden>
+        <input type="checkbox" id="use-hitl" />
+        <span>HITL thật: dừng tại <code>approval</code>, chờ nút Phê duyệt / Từ chối</span>
+      </label>
+      <div id="hitl-panel" hidden>
+        <h3>Đang chờ phê duyệt</h3>
+        <pre id="hitl-payload"></pre>
+        <div class="hitl-actions">
+          <button type="button" id="hitl-approve">Phê duyệt</button>
+          <button type="button" id="hitl-reject">Từ chối</button>
+        </div>
+      </div>
       <div class="meta" id="meta"></div>
       <p class="err" id="err"></p>
     </aside>
@@ -127,9 +156,53 @@
   const cyEl = document.getElementById('cy');
   const btnFit = document.getElementById('fit');
   const btnReset = document.getElementById('reset-hl');
+  const useHitlEl = document.getElementById('use-hitl');
+  const hitlBanner = document.getElementById('hitl-banner');
+  const hitlRow = document.getElementById('hitl-row');
+  const hitlPanel = document.getElementById('hitl-panel');
+  const hitlPayload = document.getElementById('hitl-payload');
+  const hitlApprove = document.getElementById('hitl-approve');
+  const hitlReject = document.getElementById('hitl-reject');
 
   let cy = null;
   let animTimer = null;
+  /** Index bước tiếp theo (0..len); dùng khi resume để không chạy lại animation từ đầu. */
+  var animNextIndex = 0;
+  let hitlEnv = false;
+  let pendingThreadId = null;
+  let accTransitions = [];
+  let accSteps = [];
+
+  function showHitlPanel(data) {
+    pendingThreadId = data.thread_id;
+    hitlPayload.textContent = JSON.stringify(data.interrupt, null, 2);
+    hitlPanel.hidden = false;
+    hitlApprove.disabled = false;
+    hitlReject.disabled = false;
+  }
+  function hideHitlPanel() {
+    hitlPanel.hidden = true;
+    pendingThreadId = null;
+  }
+
+  async function refreshHitlBanner() {
+    try {
+      var r = await fetch('/api/hitl');
+      var j = await r.json();
+      hitlEnv = !!j.interrupt_env;
+      hitlBanner.hidden = false;
+      if (hitlEnv) {
+        hitlBanner.textContent = 'LANGGRAPH_INTERRUPT đang bật — tick ô dưới để graph dừng tại approval và chờ bạn.';
+        hitlRow.hidden = false;
+      } else {
+        hitlBanner.textContent = 'HITL tắt. Bật bằng: agent-lab web --hitl (hoặc biến môi trường LANGGRAPH_INTERRUPT=true).';
+        hitlRow.hidden = true;
+        useHitlEl.checked = false;
+      }
+    } catch (e) {
+      hitlBanner.hidden = true;
+    }
+  }
 
   function escapeHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -264,32 +337,66 @@
     cy.nodes().forEach(function (n) { n.data('gcolor', DEFAULT_NODE_BG); });
     cy.fit(undefined, 28);
     btnFit.addEventListener('click', () => { if (cy) cy.fit(undefined, 28); });
-    btnReset.addEventListener('click', () => { clearAnim(); resetHighlights(); logline.textContent = ''; progress.textContent = ''; });
+    btnReset.addEventListener('click', function () {
+      clearAnim();
+      animNextIndex = 0;
+      resetHighlights();
+      logline.textContent = '';
+      progress.textContent = '';
+    });
     window.addEventListener('resize', () => { if (cy) { cy.resize(); cy.fit(undefined, 28); } });
     return cy;
   }
 
-  function animateTransitions(transitions, delayMs) {
+  function animateTransitions(transitions, delayMs, opts) {
+    opts = opts || {};
+    var doReset = opts.reset !== false;
+    var startIndex = typeof opts.startIndex === 'number' ? opts.startIndex : 0;
+    if (!transitions || !transitions.length) {
+      btn.disabled = false;
+      hitlApprove.disabled = false;
+      hitlReject.disabled = false;
+      return;
+    }
+    if (startIndex < 0) startIndex = 0;
+    if (startIndex > transitions.length) startIndex = transitions.length;
+    var n = transitions.length;
+    if (startIndex >= n) {
+      progress.textContent = 'Hoàn thành (' + n + ' chuyển).';
+      animNextIndex = n;
+      btn.disabled = false;
+      hitlApprove.disabled = false;
+      hitlReject.disabled = false;
+      return;
+    }
     clearAnim();
-    resetHighlights();
-    if (!cy || !transitions || !transitions.length) return;
-    let i = 0;
-    const n = transitions.length;
+    if (doReset) {
+      resetHighlights();
+      animNextIndex = 0;
+    }
+    if (!cy) {
+      btn.disabled = false;
+      return;
+    }
+    var i = startIndex;
     function step() {
       cy.elements().removeClass('lit-active');
       if (i >= n) {
         progress.textContent = 'Hoàn thành (' + n + ' chuyển).';
         animTimer = null;
+        animNextIndex = n;
         btn.disabled = false;
+        hitlApprove.disabled = false;
+        hitlReject.disabled = false;
         return;
       }
-      const pair = transitions[i];
-      const src = pair[0];
-      const tgt = pair[1];
-      const eid = edgeId(src, tgt);
-      const edge = cy.getElementById(eid);
-      const nSrc = cy.getElementById(src);
-      const nTgt = cy.getElementById(tgt);
+      var pair = transitions[i];
+      var src = pair[0];
+      var tgt = pair[1];
+      var eid = edgeId(src, tgt);
+      var edge = cy.getElementById(eid);
+      var nSrc = cy.getElementById(src);
+      var nTgt = cy.getElementById(tgt);
       if (!edge.empty()) edge.addClass('lit-path');
       if (!nSrc.empty()) nSrc.addClass('lit-path');
       if (!nTgt.empty()) nTgt.addClass('lit-path');
@@ -298,12 +405,13 @@
       if (!edge.empty()) edge.addClass('lit-active');
       if (!nSrc.empty()) nSrc.addClass('lit-active');
       if (!nTgt.empty()) nTgt.addClass('lit-active');
+      animNextIndex = i + 1;
       progress.textContent = 'Chuyển ' + (i + 1) + '/' + n;
       logline.textContent = src + ' → ' + tgt + (edge.empty() ? ' (không tìm thấy cạnh trên đồ thị tĩnh)' : '');
       i += 1;
       animTimer = setTimeout(step, delayMs);
     }
-    progress.textContent = 'Đang minh hoạ…';
+    progress.textContent = doReset ? 'Đang minh hoạ…' : 'Tiếp tục minh hoạ…';
     animTimer = setTimeout(step, 200);
   }
 
@@ -336,35 +444,103 @@
     if (sc) renderMeta(sc);
   });
 
+  async function sendResume(approved) {
+    if (!pendingThreadId) return;
+    clearAnim();
+    hitlApprove.disabled = true;
+    hitlReject.disabled = true;
+    errEl.textContent = '';
+    try {
+      var r = await fetch('/api/run/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: pendingThreadId,
+          approved: approved,
+          reviewer: 'web-ui',
+          comment: approved ? '' : 'rejected from web',
+        }),
+      });
+      var data = await r.json();
+      if (!r.ok) {
+        errEl.textContent = typeof data.detail === 'string' ? data.detail : JSON.stringify(data);
+        hitlApprove.disabled = false;
+        hitlReject.disabled = false;
+        return;
+      }
+      hideHitlPanel();
+      var resumeFrom = animNextIndex;
+      accSteps = (accSteps || []).concat(data.steps || []);
+      accTransitions = (accTransitions || []).concat(data.transitions || []);
+      jsonPre.textContent = JSON.stringify({ steps: accSteps, transitions: accTransitions }, null, 2);
+      if (data.status === 'interrupt') {
+        showHitlPanel({ thread_id: data.thread_id, interrupt: data.interrupt });
+      }
+      if (accTransitions.length && resumeFrom < accTransitions.length) {
+        animateTransitions(accTransitions, 480, { reset: false, startIndex: resumeFrom });
+      } else {
+        btn.disabled = false;
+        hitlApprove.disabled = false;
+        hitlReject.disabled = false;
+      }
+    } catch (e) {
+      errEl.textContent = String(e);
+      hitlApprove.disabled = false;
+      hitlReject.disabled = false;
+    }
+  }
+
+  hitlApprove.addEventListener('click', function () { sendResume(true); });
+  hitlReject.addEventListener('click', function () { sendResume(false); });
+
   btn.addEventListener('click', async function () {
     errEl.textContent = '';
     logline.textContent = '';
     progress.textContent = '';
     jsonPre.textContent = '';
+    hideHitlPanel();
+    accTransitions = [];
+    accSteps = [];
+    animNextIndex = 0;
     btn.disabled = true;
     clearAnim();
     try {
       await ensureCy();
-      const r = await fetch('/api/run', {
+      var useHitl = useHitlEl.checked && hitlEnv;
+      var r = await fetch('/api/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario_id: sel.value }),
+        body: JSON.stringify({ scenario_id: sel.value, use_hitl: useHitl }),
       });
-      const data = await r.json();
+      var data = await r.json();
       if (!r.ok) {
         errEl.textContent = typeof data.detail === 'string' ? data.detail : JSON.stringify(data);
         btn.disabled = false;
         return;
       }
-      renderMeta(data.scenario);
-      jsonPre.textContent = JSON.stringify({ steps: data.steps, transitions: data.transitions }, null, 2);
-      if (!data.transitions || !data.transitions.length) {
+      if (data.scenario) renderMeta(data.scenario);
+      if (data.status === 'interrupt') {
+        accSteps = data.steps || [];
+        accTransitions = data.transitions || [];
+        jsonPre.textContent = JSON.stringify({ steps: accSteps, transitions: accTransitions, interrupt: data.interrupt }, null, 2);
+        showHitlPanel({ thread_id: data.thread_id, interrupt: data.interrupt });
+        resetHighlights();
+        animNextIndex = 0;
+        if (accTransitions.length) animateTransitions(accTransitions, 480, { reset: true, startIndex: 0 });
+        else { btn.disabled = false; }
+        return;
+      }
+      accSteps = data.steps || [];
+      accTransitions = data.transitions || [];
+      jsonPre.textContent = JSON.stringify({ steps: accSteps, transitions: accTransitions, final_state: data.final_state }, null, 2);
+      if (!accTransitions.length) {
         progress.textContent = 'Không có transitions.';
         btn.disabled = false;
         return;
       }
       resetHighlights();
-      animateTransitions(data.transitions, 480);
+      animNextIndex = 0;
+      animateTransitions(accTransitions, 480, { reset: true, startIndex: 0 });
     } catch (e) {
       errEl.textContent = String(e);
       btn.disabled = false;
@@ -377,10 +553,11 @@
     } catch (e) {
       errEl.textContent = String(e);
     }
-    const r = await fetch('/api/scenarios');
+    await refreshHitlBanner();
+    var r = await fetch('/api/scenarios');
     if (r.ok) {
-      const data = await r.json();
-      const sc = data.find(function (x) { return x.id === sel.value; });
+      var data = await r.json();
+      var sc = data.find(function (x) { return x.id === sel.value; });
       if (sc) renderMeta(sc);
     }
   });
