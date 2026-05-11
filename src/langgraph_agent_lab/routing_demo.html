@@ -60,6 +60,7 @@
       background: var(--panel);
       color: var(--text);
       cursor: pointer;
+      white-space: nowrap;
     }
     .cy-toolbar button:hover { border-color: var(--accent); }
     #panel-below {
@@ -132,6 +133,7 @@
       <div class="cy-toolbar">
         <button type="button" id="fit" title="Fit">Fit</button>
         <button type="button" id="reset-hl" title="Xóa highlight">Xóa highlight</button>
+        <button type="button" id="export-png" title="Export PNG toàn đồ thị (scale 3×, nền tối)">Export PNG</button>
       </div>
       <div id="cy"></div>
     </div>
@@ -156,6 +158,7 @@
   const cyEl = document.getElementById('cy');
   const btnFit = document.getElementById('fit');
   const btnReset = document.getElementById('reset-hl');
+  const btnExportPng = document.getElementById('export-png');
   const useHitlEl = document.getElementById('use-hitl');
   const hitlBanner = document.getElementById('hitl-banner');
   const hitlRow = document.getElementById('hitl-row');
@@ -337,6 +340,29 @@
     cy.nodes().forEach(function (n) { n.data('gcolor', DEFAULT_NODE_BG); });
     cy.fit(undefined, 28);
     btnFit.addEventListener('click', () => { if (cy) cy.fit(undefined, 28); });
+    btnExportPng.addEventListener('click', function () {
+      if (!cy) return;
+      try {
+        var uri = cy.png({
+          output: 'base64uri',
+          bg: '#0a0e14',
+          full: true,
+          scale: 3,
+          maxWidth: 12000,
+          maxHeight: 12000,
+        });
+        var a = document.createElement('a');
+        a.href = uri;
+        var stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        a.download = 'langgraph-workflow-' + stamp + '.png';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (ex) {
+        errEl.textContent = 'Export PNG: ' + String(ex);
+      }
+    });
     btnReset.addEventListener('click', function () {
       clearAnim();
       animNextIndex = 0;
