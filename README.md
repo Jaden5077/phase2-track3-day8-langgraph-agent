@@ -173,6 +173,8 @@ Pick one or more:
 | Command | What it does |
 |---|---|
 | `make install` | Install project + dev dependencies |
+| `make install-web` | Install dev + **web** (FastAPI UI for step-by-step routing) |
+| `make web` | Routing demo (Cytoscape graph: nodes/edges light along the run) → http://127.0.0.1:8765/ |
 | `make test` | Run pytest |
 | `make lint` | Run ruff linter |
 | `make typecheck` | Run mypy type checker |

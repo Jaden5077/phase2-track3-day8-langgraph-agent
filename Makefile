@@ -1,7 +1,13 @@
-.PHONY: install test lint typecheck run-scenarios grade-local clean
+.PHONY: install install-web test lint typecheck run-scenarios grade-local clean web
 
 install:
 	pip install -e '.[dev]'
+
+install-web:
+	pip install -e '.[dev,web]'
+
+web:
+	agent-lab web --config configs/lab.yaml
 
 test:
 	pytest

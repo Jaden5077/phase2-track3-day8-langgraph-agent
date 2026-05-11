@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LangGraph — đồ thị routing</title>
+  <script src="https://unpkg.com/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3d9cf0;
+      --ok: #3ecf8e;
+      --warn: #f0c03d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    header { padding: 0.75rem 1rem; border-bottom: 1px solid #2a3544; background: var(--panel); }
+    h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+    p.sub { margin: 0.3rem 0 0; font-size: 0.8rem; color: var(--muted); }
+    main {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      grid-template-rows: minmax(320px, 52vh) auto;
+      min-height: calc(100vh - 64px);
+    }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: auto minmax(280px, 45vh) auto; } }
+    aside {
+      grid-row: 1 / -1;
+      border-right: 1px solid #2a3544;
+      padding: 0.85rem;
+      background: #121a24;
+      overflow: auto;
+    }
+    @media (max-width: 900px) { aside { grid-row: auto; border-right: none; border-bottom: 1px solid #2a3544; } }
+    #cy-wrap {
+      grid-column: 2;
+      position: relative;
+      background: #0a0e14;
+      border-bottom: 1px solid #2a3544;
+      min-height: 320px;
+    }
+    @media (max-width: 900px) { #cy-wrap { grid-column: 1; } }
+    #cy { width: 100%; height: 100%; min-height: 320px; }
+    .cy-toolbar {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 2;
+      display: flex;
+      gap: 6px;
+    }
+    .cy-toolbar button {
+      padding: 0.35rem 0.6rem;
+      font-size: 0.75rem;
+      border: 1px solid #3a4d63;
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .cy-toolbar button:hover { border-color: var(--accent); }
+    #panel-below {
+      grid-column: 2;
+      padding: 0.75rem 1rem;
+      overflow: auto;
+      max-height: 38vh;
+    }
+    @media (max-width: 900px) { #panel-below { grid-column: 1; max-height: none; } }
+    label { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 0.3rem; }
+    select {
+      width: 100%; padding: 0.45rem 0.5rem; border-radius: 6px; border: 1px solid #2a3544;
+      background: var(--panel); color: var(--text); font-size: 0.85rem;
+    }
+    #run { margin-top: 0.6rem; width: 100%; padding: 0.5rem; border: none; border-radius: 6px; background: var(--accent); color: #0a0e14; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
+    #run:disabled { opacity: 0.5; cursor: not-allowed; }
+    .meta { margin-top: 0.75rem; font-size: 0.75rem; color: var(--muted); line-height: 1.45; }
+    .meta strong { color: var(--text); }
+    .err { color: #f06b6b; font-size: 0.8rem; margin-top: 0.4rem; }
+    #logline { font-size: 0.85rem; color: var(--warn); margin-bottom: 0.5rem; min-height: 1.2em; }
+    #progress { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.4rem; }
+    details { margin-top: 0.35rem; }
+    details summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
+    pre { margin: 0.35rem 0 0; font-size: 0.68rem; overflow: auto; max-height: 22vh; background: #0a0e14; padding: 0.5rem; border-radius: 6px; color: #c8d4e0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Đồ thị workflow — sáng từng nhánh khi chạy scenario</h1>
+    <p class="sub">Cạnh vàng = bước hiện tại; xanh dương = đã đi qua. Zoom/pan bằng chuột trên vùng đồ thị.</p>
+  </header>
+  <main>
+    <aside>
+      <label for="scen">Scenario</label>
+      <select id="scen"></select>
+      <button type="button" id="run">Chạy &amp; minh hoạ</button>
+      <div class="meta" id="meta"></div>
+      <p class="err" id="err"></p>
+    </aside>
+    <div id="cy-wrap">
+      <div class="cy-toolbar">
+        <button type="button" id="fit" title="Fit">Fit</button>
+        <button type="button" id="reset-hl" title="Xóa highlight">Xóa highlight</button>
+      </div>
+      <div id="cy"></div>
+    </div>
+    <section id="panel-below">
+      <div id="progress"></div>
+      <div id="logline"></div>
+      <details id="details-json">
+        <summary>Chi tiết bước (JSON)</summary>
+        <pre id="json-pre"></pre>
+      </details>
+    </section>
+  </main>
+  <script>
+(function () {
+  const sel = document.getElementById('scen');
+  const btn = document.getElementById('run');
+  const metaEl = document.getElementById('meta');
+  const errEl = document.getElementById('err');
+  const logline = document.getElementById('logline');
+  const progress = document.getElementById('progress');
+  const jsonPre = document.getElementById('json-pre');
+  const cyEl = document.getElementById('cy');
+  const btnFit = document.getElementById('fit');
+  const btnReset = document.getElementById('reset-hl');
+
+  let cy = null;
+  let animTimer = null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function edgeId(src, tgt) { return src + '__' + tgt; }
+
+  function clearAnim() {
+    if (animTimer) { clearTimeout(animTimer); animTimer = null; }
+  }
+
+  function resetHighlights() {
+    if (!cy) return;
+    cy.elements().removeClass('lit-path lit-active');
+  }
+
+  function cytoscapeStyles() {
+    return [
+      {
+        selector: 'node',
+        style: {
+          label: 'data(label)',
+          'background-color': '#243044',
+          'border-width': 2,
+          'border-color': '#4a6078',
+          color: '#e7ecf3',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '11px',
+          'text-wrap': 'wrap',
+          'text-max-width': '100px',
+          shape: 'roundrectangle',
+          padding: '10px',
+        },
+      },
+      {
+        selector: 'node.lit-path',
+        style: {
+          'border-color': '#3d9cf0',
+          'background-color': '#2d4a6f',
+        },
+      },
+      {
+        selector: 'node.lit-active',
+        style: {
+          'border-color': '#ffd54f',
+          'border-width': 4,
+          'background-color': '#3d5a82',
+        },
+      },
+      {
+        selector: 'edge',
+        style: {
+          width: 2,
+          'line-color': '#3a4d63',
+          'target-arrow-color': '#3a4d63',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          label: 'data(label)',
+          'font-size': '8px',
+          color: '#6b7d95',
+          'text-rotation': 'autorotate',
+        },
+      },
+      {
+        selector: 'edge.lit-path',
+        style: {
+          'line-color': '#2d7bbf',
+          width: 3,
+          'target-arrow-color': '#2d7bbf',
+        },
+      },
+      {
+        selector: 'edge.lit-active',
+        style: {
+          'line-color': '#ffd54f',
+          width: 5,
+          'target-arrow-color': '#ffd54f',
+        },
+      },
+    ];
+  }
+
+  async function ensureCy() {
+    if (cy) return cy;
+    const r = await fetch('/api/graph-topology');
+    if (!r.ok) throw new Error(await r.text());
+    const topo = await r.json();
+    cy = cytoscape({
+      container: cyEl,
+      elements: topo.elements,
+      style: cytoscapeStyles(),
+      layout: { name: 'preset' },
+      minZoom: 0.25,
+      maxZoom: 2.5,
+      wheelSensitivity: 0.35,
+    });
+    cy.fit(undefined, 28);
+    btnFit.addEventListener('click', () => { if (cy) cy.fit(undefined, 28); });
+    btnReset.addEventListener('click', () => { clearAnim(); resetHighlights(); logline.textContent = ''; progress.textContent = ''; });
+    window.addEventListener('resize', () => { if (cy) { cy.resize(); cy.fit(undefined, 28); } });
+    return cy;
+  }
+
+  function animateTransitions(transitions, delayMs) {
+    clearAnim();
+    resetHighlights();
+    if (!cy || !transitions || !transitions.length) return;
+    let i = 0;
+    const n = transitions.length;
+    function step() {
+      cy.elements().removeClass('lit-active');
+      if (i >= n) {
+        progress.textContent = 'Hoàn thành (' + n + ' chuyển).';
+        animTimer = null;
+        btn.disabled = false;
+        return;
+      }
+      const pair = transitions[i];
+      const src = pair[0];
+      const tgt = pair[1];
+      const eid = edgeId(src, tgt);
+      const edge = cy.getElementById(eid);
+      const nSrc = cy.getElementById(src);
+      const nTgt = cy.getElementById(tgt);
+      if (!edge.empty()) edge.addClass('lit-path');
+      if (!nSrc.empty()) nSrc.addClass('lit-path');
+      if (!nTgt.empty()) nTgt.addClass('lit-path');
+      if (!edge.empty()) edge.addClass('lit-active');
+      if (!nSrc.empty()) nSrc.addClass('lit-active');
+      if (!nTgt.empty()) nTgt.addClass('lit-active');
+      progress.textContent = 'Chuyển ' + (i + 1) + '/' + n;
+      logline.textContent = src + ' → ' + tgt + (edge.empty() ? ' (không tìm thấy cạnh trên đồ thị tĩnh)' : '');
+      i += 1;
+      animTimer = setTimeout(step, delayMs);
+    }
+    progress.textContent = 'Đang minh hoạ…';
+    animTimer = setTimeout(step, 200);
+  }
+
+  async function loadScenarios() {
+    errEl.textContent = '';
+    const r = await fetch('/api/scenarios');
+    if (!r.ok) { errEl.textContent = await r.text(); return; }
+    const data = await r.json();
+    sel.innerHTML = data.map(function (s) {
+      return '<option value="' + escapeHtml(s.id) + '">' + escapeHtml(s.id) + ' — ' + escapeHtml(s.expected_route) + '</option>';
+    }).join('');
+    if (data[0]) sel.value = data[0].id;
+  }
+
+  function renderMeta(sc) {
+    metaEl.innerHTML =
+      '<strong>Query</strong><br/>' + escapeHtml(sc.query) + '<br/><br/>' +
+      '<strong>expected_route</strong> ' + escapeHtml(sc.expected_route) + '<br/>' +
+      '<strong>requires_approval</strong> ' + sc.requires_approval + '<br/>' +
+      '<strong>should_retry</strong> ' + sc.should_retry + ' · <strong>max_attempts</strong> ' + sc.max_attempts + '<br/>' +
+      (sc.tags && sc.tags.length ? '<strong>tags</strong> ' + escapeHtml(sc.tags.join(', ')) : '');
+  }
+
+  sel.addEventListener('change', async function () {
+    errEl.textContent = '';
+    const r = await fetch('/api/scenarios');
+    if (!r.ok) return;
+    const data = await r.json();
+    const sc = data.find(function (x) { return x.id === sel.value; });
+    if (sc) renderMeta(sc);
+  });
+
+  btn.addEventListener('click', async function () {
+    errEl.textContent = '';
+    logline.textContent = '';
+    progress.textContent = '';
+    jsonPre.textContent = '';
+    btn.disabled = true;
+    clearAnim();
+    try {
+      await ensureCy();
+      const r = await fetch('/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario_id: sel.value }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        errEl.textContent = typeof data.detail === 'string' ? data.detail : JSON.stringify(data);
+        btn.disabled = false;
+        return;
+      }
+      renderMeta(data.scenario);
+      jsonPre.textContent = JSON.stringify({ steps: data.steps, transitions: data.transitions }, null, 2);
+      if (!data.transitions || !data.transitions.length) {
+        progress.textContent = 'Không có transitions.';
+        btn.disabled = false;
+        return;
+      }
+      resetHighlights();
+      animateTransitions(data.transitions, 480);
+    } catch (e) {
+      errEl.textContent = String(e);
+      btn.disabled = false;
+    }
+  });
+
+  loadScenarios().then(async function () {
+    try {
+      await ensureCy();
+    } catch (e) {
+      errEl.textContent = String(e);
+    }
+    const r = await fetch('/api/scenarios');
+    if (r.ok) {
+      const data = await r.json();
+      const sc = data.find(function (x) { return x.id === sel.value; });
+      if (sc) renderMeta(sc);
+    }
+  });
+})();
+  </script>
+</body>
+</html>
