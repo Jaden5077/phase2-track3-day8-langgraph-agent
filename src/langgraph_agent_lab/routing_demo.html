@@ -89,7 +89,7 @@
 <body>
   <header>
     <h1>Đồ thị workflow — sáng từng nhánh khi chạy scenario</h1>
-    <p class="sub">Cạnh vàng = bước hiện tại; xanh dương = đã đi qua. Zoom/pan bằng chuột trên vùng đồ thị.</p>
+    <p class="sub">Node đã chạy qua đổi màu theo gradient (đầu run → cuối run). Cạnh vàng = bước hiện tại. Zoom/pan bằng chuột.</p>
   </header>
   <main>
     <aside>
@@ -137,6 +137,37 @@
 
   function edgeId(src, tgt) { return src + '__' + tgt; }
 
+  var DEFAULT_NODE_BG = '#243044';
+  var GRAD_C0 = [46, 74, 110];
+  var GRAD_C1 = [42, 157, 143];
+  var GRAD_C2 = [233, 196, 106];
+
+  function lerpArr(a, b, t) {
+    return [0, 1, 2].map(function (j) { return Math.round(a[j] + (b[j] - a[j]) * t); });
+  }
+  function rgbToHex(rgb) {
+    return '#' + rgb.map(function (x) {
+      var v = Math.max(0, Math.min(255, x));
+      var h = v.toString(16);
+      return h.length === 1 ? '0' + h : h;
+    }).join('');
+  }
+  /** t in [0,1]: indigo → teal → amber */
+  function gradientAt(t) {
+    var u = Math.max(0, Math.min(1, t));
+    if (u <= 0.5) return rgbToHex(lerpArr(GRAD_C0, GRAD_C1, u / 0.5));
+    return rgbToHex(lerpArr(GRAD_C1, GRAD_C2, (u - 0.5) / 0.5));
+  }
+  /** Mỗi node giữ bước lớn nhất đã tới (lặp lại tool/evaluate vẫn tiến màu về cuối gradient). */
+  function applyNodeGradientStep(ele, stepIndex, totalSteps) {
+    if (!ele || ele.empty()) return;
+    var denom = Math.max(1, totalSteps - 1);
+    var prev = ele.data('gstep');
+    var k = prev == null ? stepIndex : Math.max(prev, stepIndex);
+    ele.data('gstep', k);
+    ele.data('gcolor', gradientAt(k / denom));
+  }
+
   function clearAnim() {
     if (animTimer) { clearTimeout(animTimer); animTimer = null; }
   }
@@ -144,6 +175,10 @@
   function resetHighlights() {
     if (!cy) return;
     cy.elements().removeClass('lit-path lit-active');
+    cy.nodes().forEach(function (n) {
+      n.removeData('gstep');
+      n.data('gcolor', DEFAULT_NODE_BG);
+    });
   }
 
   function cytoscapeStyles() {
@@ -152,7 +187,7 @@
         selector: 'node',
         style: {
           label: 'data(label)',
-          'background-color': '#243044',
+          'background-color': 'data(gcolor)',
           'border-width': 2,
           'border-color': '#4a6078',
           color: '#e7ecf3',
@@ -168,8 +203,8 @@
       {
         selector: 'node.lit-path',
         style: {
-          'border-color': '#3d9cf0',
-          'background-color': '#2d4a6f',
+          'border-color': '#5cadff',
+          'border-width': 2,
         },
       },
       {
@@ -177,7 +212,6 @@
         style: {
           'border-color': '#ffd54f',
           'border-width': 4,
-          'background-color': '#3d5a82',
         },
       },
       {
@@ -227,6 +261,7 @@
       maxZoom: 2.5,
       wheelSensitivity: 0.35,
     });
+    cy.nodes().forEach(function (n) { n.data('gcolor', DEFAULT_NODE_BG); });
     cy.fit(undefined, 28);
     btnFit.addEventListener('click', () => { if (cy) cy.fit(undefined, 28); });
     btnReset.addEventListener('click', () => { clearAnim(); resetHighlights(); logline.textContent = ''; progress.textContent = ''; });
@@ -258,6 +293,8 @@
       if (!edge.empty()) edge.addClass('lit-path');
       if (!nSrc.empty()) nSrc.addClass('lit-path');
       if (!nTgt.empty()) nTgt.addClass('lit-path');
+      applyNodeGradientStep(nSrc, i, n);
+      applyNodeGradientStep(nTgt, i, n);
       if (!edge.empty()) edge.addClass('lit-active');
       if (!nSrc.empty()) nSrc.addClass('lit-active');
       if (!nTgt.empty()) nTgt.addClass('lit-active');
